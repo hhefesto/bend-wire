@@ -1,0 +1,11 @@
+--- a/Wire.bend	2026-11-14 16:05:20.376375451 -0600
++++ b/Wire.bend	2026-11-14 16:05:20.376983546 -0600
+@@ -102,7 +102,7 @@
+     case wr.More{rev, +seen}:
+       wr.cut(bs, rev, seen)
+     case wr.Head{h, rest}:
+-      wr.Head{h, List.append(&2, U32, rest, bs)}
++      wr.Head{h, rest}
+ 
+ # Text
+ # ----

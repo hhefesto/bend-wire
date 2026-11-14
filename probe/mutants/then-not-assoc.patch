@@ -1,0 +1,11 @@
+--- a/Wire.bend	2026-11-14 16:05:20.441139774 -0600
++++ b/Wire.bend	2026-11-14 16:05:20.441983524 -0600
+@@ -586,7 +586,7 @@
+   app => app
+ 
+ def wr.mid.then(f: wr.Mid(), g: wr.Mid()) -> wr.Mid():
+-  app => f(g(app))
++  app => f(g(r => IO.bind(wr.Resp, wr.Resp, app(r), x => IO.pure(wr.Resp, wr.with(x, wr.H{"X", ""})))))
+ 
+ # A request's parts
+ # -----------------

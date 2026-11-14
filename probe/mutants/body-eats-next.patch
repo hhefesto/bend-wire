@@ -1,0 +1,11 @@
+--- a/Wire.bend	2026-11-14 16:05:20.395292201 -0600
++++ b/Wire.bend	2026-11-14 16:05:20.396983540 -0600
+@@ -636,7 +636,7 @@
+ def wr.split(n: Nat, bs: List<&2, U32>) -> List<&2, U32> & List<&2, U32>:
+   match n bs:
+     case 0n rest:
+-      ([], rest)
++      ([], [])
+     case 1n+p Nil{}:
+       ([], [])
+     case 1n+p Con{+b, t}:

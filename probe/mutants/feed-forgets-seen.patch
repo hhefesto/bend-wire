@@ -1,0 +1,11 @@
+--- a/Wire.bend	2026-11-14 16:05:20.360412376 -0600
++++ b/Wire.bend	2026-11-14 16:05:20.360983552 -0600
+@@ -100,7 +100,7 @@
+ def wr.feed(c: wr.Cut, bs: List<&2, U32>) -> wr.Cut:
+   match c:
+     case wr.More{rev, +seen}:
+-      wr.cut(bs, rev, seen)
++      wr.cut(bs, rev, 0)
+     case wr.Head{h, rest}:
+       wr.Head{h, List.append(&2, U32, rest, bs)}
+ 
