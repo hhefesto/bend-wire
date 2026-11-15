@@ -214,17 +214,17 @@ def wr.s.answered(sock: Socket, r: W.wr.Resp, +keep: Bool, +bare: Bool, rest: Li
     case False{}:
       wr.s.send(sock, r, False{}, bare)
 
-def wr.s.split.then(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), +env: E, req: W.wr.Req, +peer: String, sock: Socket, +keep: Bool, +bare: Bool, br: List<&2, U32> & List<&2, U32>, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
+def wr.s.split.then(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, +env: E, req: W.wr.Req, +peer: String, sock: Socket, +keep: Bool, +bare: Bool, br: List<&2, U32> & List<&2, U32>, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
   match br:
     case (body, rest):
       do IO<Socket>:
         resp : W.wr.Resp <- app(env, W.wr.req.with(req, body, peer))
         wr.s.answered(sock, resp, keep, bare, rest, more)
 
-def wr.s.bodied(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), +env: E, req: W.wr.Req, +want: U32, +peer: String, r: Socket & List<&2, U32>, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
+def wr.s.bodied(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, +env: E, req: W.wr.Req, +want: U32, +peer: String, r: Socket & List<&2, U32>, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
   match req r:
     case W.wr.Req{+m, +v, +p, +raw, +q, +hs, +b, +x} Tuple{sock, bs}:
-      wr.s.split.then(~E, ~app, env, W.wr.Req{m, v, p, raw, q, hs, b, x}, peer, sock, W.wr.keep(v, hs), String.eq(m, "HEAD"), W.wr.split(U32.to_nat(want), bs), more)
+      wr.s.split.then(~E, ~app, ~pre, env, W.wr.Req{m, v, p, raw, q, hs, b, x}, peer, sock, W.wr.keep(v, hs), String.eq(m, "HEAD"), W.wr.split(U32.to_nat(want), bs), more)
 
 def wr.s.toolong(sock: Socket) -> IO(Socket):
   wr.s.send(sock, W.wr.json(413, "{\"replyOk\":false,\"replySays\":\"it is too large\"}"), False{}, False{})
@@ -234,78 +234,90 @@ def wr.s.reqlen(+req: W.wr.Req) -> U32:
     case W.wr.Req{m, v, p, raw, q, +hs, b, x}:
       W.wr.length(hs)
 
-def wr.s.read.at(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), big: Bool, +env: E, +peer: String, sock: Socket, +req: W.wr.Req, +want: U32, +rest: List<&2, U32>, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
+def wr.s.read.at(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, big: Bool, +env: E, +peer: String, sock: Socket, +req: W.wr.Req, +want: U32, +rest: List<&2, U32>, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
   match big:
     case True{}:
       wr.s.toolong(sock)
     case False{}:
       do IO<Socket>:
         r : Socket & List<&2, U32> <- wr.s.body(4096n, sock, want, wr.s.len(rest, 0), [rest])
-        wr.s.bodied(~E, ~app, env, req, want, peer, r, more)
+        wr.s.bodied(~E, ~app, ~pre, env, req, want, peer, r, more)
 
-def wr.s.read.len(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), +env: E, +max: U32, +peer: String, sock: Socket, +req: W.wr.Req, +want: U32, +rest: List<&2, U32>, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
-  wr.s.read.at(~E, ~app, U32.is_gt(want, max), env, peer, sock, req, want, rest, more)
+# answered before its body is read (the application's `pre` said so: a
+# refusal, as a middleware that will not read a body), then the connection
+# ends, since the body was never read
+def wr.s.read.pre(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, m: Maybe<&2, W.wr.Resp>, +env: E, +max: U32, +peer: String, sock: Socket, +req: W.wr.Req, +want: U32, +rest: List<&2, U32>, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
+  match m:
+    case Some{r}:
+      wr.s.send(sock, r, False{}, String.eq(W.wr.req.method(req), "HEAD"))
+    case None{}:
+      wr.s.read.at(~E, ~app, ~pre, U32.is_gt(want, max), env, peer, sock, req, want, rest, more)
 
-def wr.s.read(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), +env: E, +max: U32, +peer: String, sock: Socket, m: Maybe<&2, W.wr.Req>, +rest: List<&2, U32>, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
+def wr.s.read.len(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, +env: E, +max: U32, +peer: String, sock: Socket, +req: W.wr.Req, +want: U32, +rest: List<&2, U32>, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
+  wr.s.read.pre(~E, ~app, ~pre, pre(env, req), env, max, peer, sock, req, want, rest, more)
+
+def wr.s.read(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, +env: E, +max: U32, +peer: String, sock: Socket, m: Maybe<&2, W.wr.Req>, +rest: List<&2, U32>, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
   match m:
     case None{}:
       wr.s.send(sock, W.wr.text(400, "that is no request"), False{}, False{})
     case Some{+req}:
-      wr.s.read.len(~E, ~app, env, max, peer, sock, req, wr.s.reqlen(req), rest, more)
+      wr.s.read.len(~E, ~app, ~pre, env, max, peer, sock, req, wr.s.reqlen(req), rest, more)
 
-def wr.s.headed(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), +env: E, +max: U32, +peer: String, r: Socket & W.wr.Cut, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
+def wr.s.headed(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, +env: E, +max: U32, +peer: String, r: Socket & W.wr.Cut, more: Socket -> W.wr.Cut -> IO(Socket)) -> IO(Socket):
   match r:
     case (sock, W.wr.More{rev, seen}):
       IO.pure(Socket, sock)
     case (sock, W.wr.Head{+h, +rest}):
-      wr.s.read(~E, ~app, env, max, peer, sock, W.wr.req(h), rest, more)
+      wr.s.read(~E, ~app, ~pre, env, max, peer, sock, W.wr.req(h), rest, more)
 
 # the requests of a connection, at most `fuel` of them
-def wr.s.conn(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), fuel: Nat, sock: Socket, c: W.wr.Cut, +env: E, +max: U32, +peer: String) -> IO(Socket):
+def wr.s.conn(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, fuel: Nat, sock: Socket, c: W.wr.Cut, +env: E, +max: U32, +peer: String) -> IO(Socket):
   match fuel:
     case 0n:
       IO.pure(Socket, sock)
     case 1n+p:
       do IO<Socket>:
         r : Socket & W.wr.Cut <- wr.s.head(64n, sock, c)
-        wr.s.headed(~E, ~app, env, max, peer, r, s => c2 => wr.s.conn(~E, ~app, p, s, c2, env, max, peer))
+        wr.s.headed(~E, ~app, ~pre, env, max, peer, r, s => c2 => wr.s.conn(~E, ~app, ~pre, p, s, c2, env, max, peer))
 
-def wr.s.peered(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), +env: E, +max: U32, r: Socket & String) -> IO(Unit):
+def wr.s.peered(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, +env: E, +max: U32, r: Socket & String) -> IO(Unit):
   match r:
     case (sock, +peer):
       do IO<Unit>:
-        s : Socket <- wr.s.conn(~E, ~app, 1000000n, sock, W.wr.More{[], 0}, env, max, peer)
+        s : Socket <- wr.s.conn(~E, ~app, ~pre, 1000000n, sock, W.wr.More{[], 0}, env, max, peer)
         Socket.close(s)
 
-def wr.s.one(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), +env: E, +max: U32, sock: Socket) -> IO(Unit):
+def wr.s.one(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, +env: E, +max: U32, sock: Socket) -> IO(Unit):
   do IO<Unit>:
     r : Socket & String <- wr.peer(sock)
-    wr.s.peered(~E, ~app, env, max, r)
+    wr.s.peered(~E, ~app, ~pre, env, max, r)
 
 # The listener
 # ------------
 
-def wr.s.accepted(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), l: Listener, +env: E, +max: U32, r: Result<&1, &1, U32 & String, Socket>, more: Listener -> IO(Listener)) -> IO(Listener):
+def wr.s.accepted(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, l: Listener, +env: E, +max: U32, r: Result<&1, &1, U32 & String, Socket>, more: Listener -> IO(Listener)) -> IO(Listener):
   match r:
     case Fail{e}:
       more(l)
     case Done{sock}:
       do IO<Listener>:
-        IO.spawn(Unit, wr.s.one(~E, ~app, env, max, sock))
+        IO.spawn(Unit, wr.s.one(~E, ~app, ~pre, env, max, sock))
         more(l)
 
-def wr.s.accept(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), r: Listener & Result<&1, &1, U32 & String, Socket>, +env: E, +max: U32, more: Listener -> IO(Listener)) -> IO(Listener):
+def wr.s.accept(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, r: Listener & Result<&1, &1, U32 & String, Socket>, +env: E, +max: U32, more: Listener -> IO(Listener)) -> IO(Listener):
   match r:
     case (l, res):
-      wr.s.accepted(~E, ~app, l, env, max, res, more)
+      wr.s.accepted(~E, ~app, ~pre, l, env, max, res, more)
 
 # connections, one after another, `fuel` of them (Bend's loops end; a
-# server's counts down what the world sends it); max: the longest body read
-def wr.serve(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), fuel: Nat, l: Listener, +env: E, +max: U32) -> IO(Listener):
+# server's counts down what the world sends it); max: the longest body read;
+# pre: what the application answers to a request before its body is read
+# (None: read it, then ask app)
+def wr.serve(~E: Data, ~app: E -> W.wr.Req -> IO(W.wr.Resp), ~pre: E -> W.wr.Req -> Maybe<&2, W.wr.Resp>, fuel: Nat, l: Listener, +env: E, +max: U32) -> IO(Listener):
   match fuel:
     case 0n:
       IO.pure(Listener, l)
     case 1n+p:
       do IO<Listener>:
         r : Listener & Result<&1, &1, U32 & String, Socket> <- TCP.accept(l)
-        wr.s.accept(~E, ~app, r, env, max, l2 => wr.serve(~E, ~app, p, l2, env, max))
+        wr.s.accept(~E, ~app, ~pre, r, env, max, l2 => wr.serve(~E, ~app, ~pre, p, l2, env, max))

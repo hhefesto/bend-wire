@@ -8,13 +8,16 @@ import ../Serve.bend as S
 def hi.app(u: Unit, r: W.wr.Req) -> IO(W.wr.Resp):
   IO.pure(W.wr.Resp, W.wr.json(200, "{\"signedIn\":false}"))
 
+def hi.pre(u: Unit, r: W.wr.Req) -> Maybe<&2, W.wr.Resp>:
+  None{}
+
 def hi.listening(r: Result<&1, &1, U32 & String, Listener>) -> IO(Unit):
   match r:
     case Fail{e}:
       IO.die(Unit, 1, "cannot listen")
     case Done{l}:
       do IO<Unit>:
-        l2 : Listener <- S.wr.serve(~Unit, ~hi.app, 4000000000n, l, Unit{}, 4000000)
+        l2 : Listener <- S.wr.serve(~Unit, ~hi.app, ~hi.pre, 4000000000n, l, Unit{}, 4000000)
         return Unit{}
 
 def hi.port(as: List<String>) -> U32:

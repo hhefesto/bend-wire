@@ -16,7 +16,9 @@ next request. `Serve.bend` runs it: a computation per connection
 (`IO.spawn`), requests read one after another on it (keep-alive, pipelined
 ones too), each answered before the next is read; responses carry
 Content-Length (and `Connection: close` when the request asked for it or
-was HTTP/1.0); a body is text, bytes, or a range of a file sent in 64 KB
+was HTTP/1.0); before a body is read the application may answer instead
+(`pre`: a refusal, as Api.hs's bodyLimit middleware), and the connection
+then ends; a body is text, bytes, or a range of a file sent in 64 KB
 pieces; HEAD gets the head only.
 
 **Laws** (`LAWS.bend`, proved in `PROOF.bend`, `--verdict` too):
