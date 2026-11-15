@@ -170,7 +170,34 @@ def wr.s.file.open(sock: Socket, +off: U32, +n: U32, r: Result<&1, &1, U32 & Str
         r2 : Socket & File <- wr.s.file.piece(65536n, sock, f, off, n)
         wr.s.file.close(r2)
 
-def wr.s.parts(sock: Socket, head: String, bare: Bool, b: W.wr.Body) -> IO(Socket):
+# The head and a file's first piece go out in one write, so the head is not
+# a small segment alone: Nagle's algorithm holds the next write's last
+# segment until the head is acknowledged, and the peer's delayed ACK waits
+# about 40 ms (TCP_NODELAY would need a call Base lacks).
+def wr.s.file.head(sock: Socket, +head: String, +off: U32, +n: U32, r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> IO(Socket):
+  match r:
+    case (f, Fail{e}):
+      do IO<Socket>:
+        s : Socket & Result<&1, &1, (U32 & String) & List<&2, U32>, Unit> <- TCP.send(sock, head)
+        wr.s.file.close((wr.s.sock(s), f))
+    case (f, Done{bs}):
+      do IO<Socket>:
+        s : Socket & Result<&1, &1, (U32 & String) & List<&2, U32>, Unit> <- TCP.send_bytes(sock, List.append(&2, U32, W.wr.utf8.of(head), bs))
+        r2 : Socket & File <- wr.s.file.piece(65536n, wr.s.sock(s), f, (off + U32.min(n, 65536) : U32), (n - U32.min(n, 65536) : U32))
+        wr.s.file.close(r2)
+
+def wr.s.file.first(sock: Socket, +head: String, +off: U32, +n: U32, r: Result<&1, &1, U32 & String, File>) -> IO(Socket):
+  match r:
+    case Fail{e}:
+      do IO<Socket>:
+        s : Socket & Result<&1, &1, (U32 & String) & List<&2, U32>, Unit> <- TCP.send(sock, head)
+        return wr.s.sock(s)
+    case Done{f}:
+      do IO<Socket>:
+        r2 : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_at(f, off, U32.min(n, 65536))
+        wr.s.file.head(sock, head, off, n, r2)
+
+def wr.s.parts(sock: Socket, +head: String, bare: Bool, b: W.wr.Body) -> IO(Socket):
   match bare b:
     case True{} x:
       do IO<Socket>:
@@ -182,14 +209,12 @@ def wr.s.parts(sock: Socket, head: String, bare: Bool, b: W.wr.Body) -> IO(Socke
         return wr.s.sock(r)
     case False{} W.wr.Bytes{bs}:
       do IO<Socket>:
-        r : Socket & Result<&1, &1, (U32 & String) & List<&2, U32>, Unit> <- TCP.send(sock, head)
-        r2 : Socket & Result<&1, &1, (U32 & String) & List<&2, U32>, Unit> <- TCP.send_bytes(wr.s.sock(r), bs)
-        return wr.s.sock(r2)
+        r : Socket & Result<&1, &1, (U32 & String) & List<&2, U32>, Unit> <- TCP.send_bytes(sock, List.append(&2, U32, W.wr.utf8.of(head), bs))
+        return wr.s.sock(r)
     case False{} W.wr.File{path, +off, +n}:
       do IO<Socket>:
-        r : Socket & Result<&1, &1, (U32 & String) & List<&2, U32>, Unit> <- TCP.send(sock, head)
         f : Result<&1, &1, U32 & String, File> <- File.open(path, "r")
-        wr.s.file.open(wr.s.sock(r), off, n, f)
+        wr.s.file.first(sock, head, off, n, f)
 
 def wr.s.sized(sock: Socket, +st: U32, hs: List<&2, W.wr.H>, bn: W.wr.Body & U32, +keep: Bool, bare: Bool) -> IO(Socket):
   match bn:
